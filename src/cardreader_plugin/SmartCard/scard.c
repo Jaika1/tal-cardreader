@@ -61,9 +61,20 @@ LPTSTR reader_name_slots[2] = {NULL, NULL};
 int reader_count = 0;
 LONG lRet = 0;
 
-void scard_poll(uint8_t *buf, SCARDCONTEXT _hContext, LPCTSTR _readerName, uint8_t unit_no)
+static const BYTE COMMAND_GET_UID[5] = {0xFFu, 0xCAu, 0x00u, 0x00u, 0x00u};
+static const BYTE PARAM_LOAD_KEY[11] = {0xFFu, 0x82u, 0x00u, 0x00u, 0x06u, 0x57u, 0x43u, 0x43u, 0x46u, 0x76u, 0x32u};
+static const BYTE COMMAND_AUTH_BLOCK2[10] = {0xFFu, 0x86u, 0x00u, 0x00u, 0x05u, 0x01u, 0x00u, 0x02u, 0x61u, 0x00u};
+static const BYTE COMMAND_READ_BLOCK2[5] = {0xFFu, 0xB0u, 0x00u, 0x02u, 0x10u};
+
+void scard_poll(struct card_info *card_info, SCARDCONTEXT _hContext, LPCTSTR _readerName, uint8_t unit_no, bool *waitForTouch, bool *hasCard)
 {
     printInfo("%s (%s): Update on reader : %s\n", __func__, module, reader_states[unit_no].szReader);
+    
+    if (*waitForTouch == false){
+        printError("%s (%s): Card was rejected, still waiting for WaitTouch()\n", __func__, module);
+        return;
+    }
+    
     // Connect to the smart card.
     LONG lRet = 0;
     SCARDHANDLE hCard;
@@ -111,63 +122,128 @@ void scard_poll(uint8_t *buf, SCARDCONTEXT _hContext, LPCTSTR _readerName, uint8
 
     // Figure out if we should reverse the UID returned by the card based on the ATR protocol
     BYTE cardProtocol = atr[12];
-    BOOL shouldReverseUid = false;
-    if (cardProtocol == SCARD_ATR_PROTOCOL_ISO15693_PART3)
-    {
-        printWarning("%s (%s): Card protocol: ISO15693_PART3\n", __func__, module);
-        shouldReverseUid = true;
-    }
 
-    else if (cardProtocol == SCARD_ATR_PROTOCOL_ISO14443_PART3)
+    if (cardProtocol == SCARD_ATR_PROTOCOL_ISO14443_PART3) // Mifare
+    {
         printWarning("%s (%s): Card protocol: ISO14443_PART3\n", __func__, module);
 
-    else if (cardProtocol == SCARD_ATR_PROTOCOL_FELICA_212K)
+        printWarning("%s (%s): Loading key for block auth onto reader...\n", __func__, module);
+        cbRecv = MAX_APDU_SIZE;
+        if ((lRet = SCardTransmit(hCard, pci, PARAM_LOAD_KEY, sizeof(PARAM_LOAD_KEY), NULL, pbRecv, &cbRecv)) != SCARD_S_SUCCESS)
+        {
+            printError("%s (%s): Error loading key to reader : 0x%08X\n", __func__, module, lRet);
+            return;
+        }
+
+        if (cbRecv > 1 && pbRecv[0] == PICC_ERROR)
+        {
+            printError("%s (%s): loading key failed\n", __func__, module);
+            return;
+        }
+
+        printWarning("%s (%s): key has been loaded, authenticating block 2...\n", __func__, module);
+
+        cbRecv = MAX_APDU_SIZE;
+        if ((lRet = SCardTransmit(hCard, pci, COMMAND_AUTH_BLOCK2, sizeof(COMMAND_AUTH_BLOCK2), NULL, pbRecv, &cbRecv)) != SCARD_S_SUCCESS)
+        {
+            printError("%s (%s): Couldn't authenticate for block 2 : 0x%08X\n", __func__, module, lRet);
+            return;
+        }
+
+        printWarning("%s (%s): authentication successful, reading block 2...\n", __func__, module);
+
+        cbRecv = MAX_APDU_SIZE;
+        if ((lRet = SCardTransmit(hCard, pci, COMMAND_READ_BLOCK2, sizeof(COMMAND_READ_BLOCK2), NULL, pbRecv, &cbRecv)) != SCARD_S_SUCCESS)
+        {
+            printError("%s (%s): Couldn't read block 2 : 0x%08X\n", __func__, module, lRet);
+            return;
+        }
+
+        printWarning("%s (%s): Block 2 read successfully!\n", __func__, module);
+        memcpy(card_info->card_id, pbRecv + 6, 10);
+        card_info->card_type = Mifare;
+        *waitForTouch = false;
+        *hasCard = true;
+        return;
+    }
+    else if (cardProtocol == SCARD_ATR_PROTOCOL_FELICA_212K) // Felica
+    {
         printWarning("%s (%s): Card protocol: FELICA_212K\n", __func__, module);
 
-    else if (cardProtocol == SCARD_ATR_PROTOCOL_FELICA_424K)
-        printWarning("%s (%s): Card protocol: FELICA_424K\n", __func__, module);
+        // Read mID
+        cbRecv = MAX_APDU_SIZE;
+        if ((lRet = SCardTransmit(hCard, pci, COMMAND_GET_UID, sizeof(COMMAND_GET_UID), NULL, pbRecv, &cbRecv)) != SCARD_S_SUCCESS)
+        {
+            printError("%s (%s): Error querying card UID: 0x%08X\n", __func__, module, lRet);
+            return;
+        }
 
+        if (cbRecv > 1 && pbRecv[0] == PICC_ERROR)
+        {
+            printf("scard_update: UID query failed\n");
+            printError("%s (%s): UID query failed\n", __func__, module);
+            return;
+        }
+
+        if ((lRet = SCardDisconnect(hCard, SCARD_LEAVE_CARD)) != SCARD_S_SUCCESS)
+            printError("%s (%s): Failed SCardDisconnect: 0x%08X\n", __func__, module, lRet);
+
+        if (cbRecv < 8)
+        {
+            printWarning("%s (%s): Padding card uid to 8 bytes\n", __func__, module);
+            memset(&pbRecv[cbRecv], 0, 8 - cbRecv);
+        }
+        else if (cbRecv > 8)
+            printWarning("%s (%s): taking first 8 bytes of %d received\n", __func__, module, cbRecv);
+
+        memcpy(card_info->card_id, pbRecv, 8);
+        card_info->card_type = FeliCa;
+        *waitForTouch = false;
+        *hasCard = true;
+        return;
+    }
     else
     {
         printError("%s (%s): Unknown NFC Protocol: 0x%02X\n", __func__, module, cardProtocol);
         return;
     }
 
+#pragma region LEGACY
     // Read UID
-    cbRecv = MAX_APDU_SIZE;
-    if ((lRet = SCardTransmit(hCard, pci, UID_CMD, sizeof(UID_CMD), NULL, pbRecv, &cbRecv)) != SCARD_S_SUCCESS)
-    {
-        printError("%s (%s): Error querying card UID: 0x%08X\n", __func__, module, lRet);
-        return;
-    }
+    // cbRecv = MAX_APDU_SIZE;
+    // if ((lRet = SCardTransmit(hCard, pci, UID_CMD, sizeof(UID_CMD), NULL, pbRecv, &cbRecv)) != SCARD_S_SUCCESS)
+    // {
+    //     printError("%s (%s): Error querying card UID: 0x%08X\n", __func__, module, lRet);
+    //     return;
+    // }
 
-    if (cbRecv > 1 && pbRecv[0] == PICC_ERROR)
-    {
-        printError("%s (%s): UID query failed\n", __func__, module);
-        return;
-    }
+    // if (cbRecv > 1 && pbRecv[0] == PICC_ERROR)
+    // {
+    //     printError("%s (%s): UID query failed\n", __func__, module);
+    //     return;
+    // }
 
-    if ((lRet = SCardDisconnect(hCard, SCARD_LEAVE_CARD)) != SCARD_S_SUCCESS)
-        printError("%s (%s): Failed SCardDisconnect: 0x%08X\n", __func__, module, lRet);
+    // if ((lRet = SCardDisconnect(hCard, SCARD_LEAVE_CARD)) != SCARD_S_SUCCESS)
+    //     printError("%s (%s): Failed SCardDisconnect: 0x%08X\n", __func__, module, lRet);
 
-    if (cbRecv < 8)
-    {
-        printWarning("%s (%s): Padding card uid to 8 bytes\n", __func__, module);
-        memset(&pbRecv[cbRecv], 0, 8 - cbRecv);
-    }
-    else if (cbRecv > 8)
-        printWarning("%s (%s): taking first 8 bytes of len(uid) = %02X\n", __func__, module, cbRecv);
+    // if (cbRecv < 8)
+    // {
+    //     printWarning("%s (%s): Padding card uid to 8 bytes\n", __func__, module);
+    //     memset(&pbRecv[cbRecv], 0, 8 - cbRecv);
+    // }
+    // else if (cbRecv > 8)
+    //     printWarning("%s (%s): taking first 8 bytes of len(uid) = %02X\n", __func__, module, cbRecv);
 
-    // Copy UID to struct, reversing if necessary
-    card_info_t card_info;
-    if (shouldReverseUid)
-        for (DWORD i = 0; i < 8; i++)
-            card_info.uid[i] = pbRecv[7 - i];
-    else
-        memcpy(card_info.uid, pbRecv, 8);
+    // // Copy UID to struct, reversing if necessary
+    // if (shouldReverseUid)
+    //     for (DWORD i = 0; i < 8; i++)
+    //         card_info->uid[i] = pbRecv[7 - i];
+    // else
+    //     memcpy(card_info->uid, pbRecv, 8);
 
-    for (int i = 0; i < 8; ++i)
-        buf[i] = card_info.uid[i];
+    //for (int i = 0; i < 8; ++i)
+    //    buf[i] = card_info.uid[i];
+#pragma endregion
 }
 
 void scard_clear(uint8_t unitNo)
@@ -175,7 +251,7 @@ void scard_clear(uint8_t unitNo)
     card_info_t empty_cardinfo;
 }
 
-void scard_update(uint8_t *buf)
+void scard_update(struct card_info *card_info, bool *waitForTouch, bool *hasCard)
 {
     if (reader_count < 1)
     {
@@ -213,7 +289,7 @@ void scard_update(uint8_t *buf)
         else if (newState & SCARD_STATE_PRESENT && !wasCardPresent)
         {
             printInfo("%s (%s): New card state: present\n", __func__, module);
-            scard_poll(buf, hContext, reader_states[unit_no].szReader, unit_no);
+            scard_poll(card_info, hContext, reader_states[unit_no].szReader, unit_no, waitForTouch, hasCard);
         }
 
         reader_states[unit_no].dwCurrentState = reader_states[unit_no].dwEventState;

@@ -28,16 +28,24 @@
 // #include <cstdint>
 #include "../../helpers.h"
 
+// Card types
+enum AIME_CARDTYPE
+{
+    Mifare = 0x01,
+    FeliCa = 0x02
+};
+
 // cardinfo_t is a description of a card that was presented to a reader
 typedef struct card_info
 {
     int card_type;
-    uint8_t uid[8];
+    //uint8_t uid[8];
+    uint8_t card_id[32];
 } card_info_t;
 
-void scard_update(uint8_t *buf);
+void scard_update(struct card_info *card_info, bool *waitForTouch, bool *hasCard);
 
-void scard_poll(uint8_t *buf, SCARDCONTEXT _hContext, LPCTSTR _readerName, uint8_t unit_no);
+void scard_poll(struct card_info *card_info, SCARDCONTEXT _hContext, LPCTSTR _readerName, uint8_t unit_no, bool *waitForTouch, bool *hasCard);
 
 void scard_clear(uint8_t unitNo);
 
