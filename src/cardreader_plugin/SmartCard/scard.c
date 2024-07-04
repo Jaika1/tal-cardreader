@@ -284,7 +284,7 @@ void scard_update(struct card_info *card_info, bool *waitForTouch, bool *hasCard
         else if (newState & SCARD_STATE_EMPTY)
         {
             printWarning("%s (%s): New card state: empty\n", __func__, module);
-            scard_clear(unit_no);
+            //scard_clear(unit_no);
         }
         else if (newState & SCARD_STATE_PRESENT && !wasCardPresent)
         {

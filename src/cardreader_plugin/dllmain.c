@@ -30,7 +30,7 @@ static u8 cardData[168] = {0x01, 0x01, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00,
                            0x00, 0x00, 0xFA, 0xE9, 0x69, 0x00, 0xF6, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
-static struct card_info card_info;
+static card_info_t card_info;
 
 static unsigned int __stdcall reader_poll_thread_proc(void *ctx)
 {
@@ -179,6 +179,7 @@ void Init()
     printInfo("%s (%s): Card read cooldown set to %d ms\n", __func__, module, readCooldown);
 
     printInfo("%s (%s): Init card info structure\n", __func__, module);
+    
     memset(&card_info, 0, sizeof(card_info)); // We init the card_data structure
 
     //  Find and initialize reader(s)
@@ -223,7 +224,7 @@ void Update()
             // u64 numAccessID;
             // for (int i = 0; i < 10; i++)
             //     numAccessID = (numAccessID >> 8) | ((uint64_t)card_info.card_id[i] << 56);
-            sprintf(AccessID, "%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X", 
+            sprintf(AccessID, "%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X",
             card_info.card_id[0],
             card_info.card_id[1],
             card_info.card_id[2],
@@ -253,6 +254,7 @@ void Update()
         memcpy(cardData + 0x50, AccessID, 21);
         touchCallback(0, 0, cardData, touchData);
 
+        memset(&card_info, 0, sizeof(card_info)); // Reset card_data structure
         HasCard = false;
     }
 }
