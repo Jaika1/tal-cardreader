@@ -37,7 +37,7 @@ extern int readCooldown;
 // based off acr122u reader, see page 26 in api document.
 // https://www.acs.com.hk/en/download-manual/419/API-ACR122U-2.04.pdf
 
-#define PICC_OPERATING_PARAMS 0xDFu
+#define PICC_OPERATING_PARAMS 0b11011111u //0xDFu
 BYTE PICC_OPERATING_PARAM_CMD[5] = {0xFFu, 0x00u, 0x51u, PICC_OPERATING_PARAMS, 0x00u};
 
 // return bytes from device
@@ -156,6 +156,11 @@ void scard_poll(struct card_info *card_info, SCARDCONTEXT _hContext, LPCTSTR _re
         if ((lRet = SCardTransmit(hCard, pci, COMMAND_READ_BLOCK2, sizeof(COMMAND_READ_BLOCK2), NULL, pbRecv, &cbRecv)) != SCARD_S_SUCCESS)
         {
             printError("%s (%s): Couldn't read block 2 : 0x%08X\n", __func__, module, lRet);
+            return;
+        }
+
+        if (pbRecv[6] == 0x00u && pbRecv[7] == 0x00u){
+            printError("%s (%s): Card data was malformed! Please hold the card to the reader for a longer duration!\n", __func__, module);
             return;
         }
 
