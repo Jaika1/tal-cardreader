@@ -1,5 +1,6 @@
 # Smart Card Reader ==================
-using_smartcard = false
+using_smartcard = true
+block_felica_bad_reader = true
 
 # Card Read Cooldown =================
 read_cooldown = 20

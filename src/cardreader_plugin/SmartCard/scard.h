@@ -31,8 +31,9 @@
 // Card types
 enum AIME_CARDTYPE
 {
-    Mifare = 0x01,
-    FeliCa = 0x02
+    Mifare = 0b001,
+    FeliCa = 0b010,
+    CardIO = 0b100,
 };
 
 // cardinfo_t is a description of a card that was presented to a reader
@@ -43,9 +44,9 @@ typedef struct card_info
     uint8_t card_id[32];
 } card_info_t;
 
-void scard_update(struct card_info *card_info, bool *waitForTouch, bool *hasCard);
+void scard_update(struct card_info *card_info, bool *waitForTouch, bool *hasCard, bool *blockBadFelica);
 
-void scard_poll(struct card_info *card_info, SCARDCONTEXT _hContext, LPCTSTR _readerName, uint8_t unit_no, bool *waitForTouch, bool *hasCard);
+void scard_poll(struct card_info *card_info, SCARDCONTEXT _hContext, LPCTSTR _readerName, uint8_t unit_no, bool *waitForTouch, bool *hasCard, bool *blockBadFelica);
 
 void scard_clear(uint8_t unitNo);
 

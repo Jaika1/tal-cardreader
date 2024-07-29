@@ -66,7 +66,7 @@ static const BYTE PARAM_LOAD_KEY[11] = {0xFFu, 0x82u, 0x00u, 0x00u, 0x06u, 0x57u
 static const BYTE COMMAND_AUTH_BLOCK2[10] = {0xFFu, 0x86u, 0x00u, 0x00u, 0x05u, 0x01u, 0x00u, 0x02u, 0x61u, 0x00u};
 static const BYTE COMMAND_READ_BLOCK2[5] = {0xFFu, 0xB0u, 0x00u, 0x02u, 0x10u};
 
-void scard_poll(struct card_info *card_info, SCARDCONTEXT _hContext, LPCTSTR _readerName, uint8_t unit_no, bool *waitForTouch, bool *hasCard)
+void scard_poll(struct card_info *card_info, SCARDCONTEXT _hContext, LPCTSTR _readerName, uint8_t unit_no, bool *waitForTouch, bool *hasCard, bool *blockBadFelica)
 {
     printInfo("%s (%s): Update on reader : %s\n", __func__, module, reader_states[unit_no].szReader);
     
@@ -159,16 +159,11 @@ void scard_poll(struct card_info *card_info, SCARDCONTEXT _hContext, LPCTSTR _re
             return;
         }
 
-        if (pbRecv[6] == 0x00u && pbRecv[7] == 0x00u){
-            printError("%s (%s): Card data was malformed! Please hold the card to the reader for a longer duration!\n", __func__, module);
-            return;
-        }
-
         printWarning("%s (%s): Block 2 read successfully!\n", __func__, module);
-        memcpy(card_info->card_id, pbRecv + 6, 10);
+        //memcpy(card_info->card_id, pbRecv + 6, 10);
         card_info->card_type = Mifare;
-        *waitForTouch = false;
-        *hasCard = true;
+        //*waitForTouch = false;
+        //*hasCard = true;
         return;
     }
     else if (cardProtocol == SCARD_ATR_PROTOCOL_FELICA_212K) // Felica
@@ -201,10 +196,10 @@ void scard_poll(struct card_info *card_info, SCARDCONTEXT _hContext, LPCTSTR _re
         else if (cbRecv > 8)
             printWarning("%s (%s): taking first 8 bytes of %d received\n", __func__, module, cbRecv);
 
-        memcpy(card_info->card_id, pbRecv, 8);
+        //memcpy(card_info->card_id, pbRecv, 8);
         card_info->card_type = FeliCa;
-        *waitForTouch = false;
-        *hasCard = true;
+        //*waitForTouch = false;
+        //*hasCard = true;
         return;
     }
     else
@@ -212,6 +207,24 @@ void scard_poll(struct card_info *card_info, SCARDCONTEXT _hContext, LPCTSTR _re
         printError("%s (%s): Unknown NFC Protocol: 0x%02X\n", __func__, module, cardProtocol);
         return;
     }
+
+    // Card taken away too fast
+    if (pbRecv[6] == 0x00u && pbRecv[7] == 0x00u){
+        printError("%s (%s): Card data was malformed! Please hold the card to the reader for a longer duration!\n", __func__, module);
+        return;
+    }
+
+    // Card is FeliCa but ACR122U clone can't read it
+    if (blockBadFelica && pbRecv[6] == 0x00u && pbRecv[7] == 0x08u){
+        printError("%s (%s): Card data was malformed! Your ACR122U clone cannot correctly read FeliCa cards!\n", __func__, module);
+        return;
+    }
+
+    memcpy(card_info->card_id, pbRecv + 6, 10);
+    //card_info->card_type = Mifare;
+    *waitForTouch = false;
+    *hasCard = true;    
+
 
 #pragma region LEGACY
     // Read UID
@@ -256,7 +269,7 @@ void scard_clear(uint8_t unitNo)
     card_info_t empty_cardinfo;
 }
 
-void scard_update(struct card_info *card_info, bool *waitForTouch, bool *hasCard)
+void scard_update(struct card_info *card_info, bool *waitForTouch, bool *hasCard, bool *blockBadFelica)
 {
     if (reader_count < 1)
     {
@@ -294,7 +307,7 @@ void scard_update(struct card_info *card_info, bool *waitForTouch, bool *hasCard
         else if (newState & SCARD_STATE_PRESENT && !wasCardPresent)
         {
             printInfo("%s (%s): New card state: present\n", __func__, module);
-            scard_poll(card_info, hContext, reader_states[unit_no].szReader, unit_no, waitForTouch, hasCard);
+            scard_poll(card_info, hContext, reader_states[unit_no].szReader, unit_no, waitForTouch, hasCard, blockBadFelica);
         }
 
         reader_states[unit_no].dwCurrentState = reader_states[unit_no].dwEventState;

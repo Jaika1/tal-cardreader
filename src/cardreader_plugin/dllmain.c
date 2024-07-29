@@ -14,7 +14,8 @@ static bool waitingForTouch = false;
 static bool HasCard = false;
 
 // Misc
-bool usingSmartCard = false;
+bool usingSmartCard = true;
+bool blockBadFelica = true;
 int readCooldown = 200;
 
 typedef void (*callbackTouch)(i32, i32, u8[168], u64);
@@ -48,34 +49,34 @@ static unsigned int __stdcall reader_poll_thread_proc(void *ctx)
             // update devices
             if (!usingSmartCard) // CardIO
             {
-                // I don't have anything to test this with nor enough know-how on what a 'CardIO' actually is :) - Jaika
+                EnterCriticalSection(&CARDIO_HID_CRIT_SECTION);
+                for (size_t device_no = 0; device_no < CARDIO_HID_CONTEXTS_LENGTH; device_no++)
+                {
+                    struct cardio_hid_device *device = &CARDIO_HID_CONTEXTS[device_no];
 
-                // EnterCriticalSection(&CARDIO_HID_CRIT_SECTION);
-                // for (size_t device_no = 0; device_no < CARDIO_HID_CONTEXTS_LENGTH; device_no++)
-                // {
-                //     struct cardio_hid_device *device = &CARDIO_HID_CONTEXTS[device_no];
+                    // get status
+                    cardio_hid_poll_value_t status = cardio_hid_device_poll(device);
+                    if (waitingForTouch == true && status == HID_POLL_CARD_READY)
+                    {
+                        // read card
+                        if (cardio_hid_device_read(device) == HID_CARD_NONE)
+                            continue;
 
-                //     // get status
-                //     cardio_hid_poll_value_t status = cardio_hid_device_poll(device);
-                //     if (status == HID_POLL_CARD_READY)
-                //     {
-
-                //         // read card
-                //         if (cardio_hid_device_read(device) == HID_CARD_NONE)
-                //             continue;
-
-                //         // if card not empty
-                //         if (*((uint64_t *)&device->u.usage_value[0]) > 0)
-                //             for (int i = 0; i < 8; ++i)
-                //                 UID[i] = device->u.usage_value[i];
-                //     }
-                // }
-                // LeaveCriticalSection(&CARDIO_HID_CRIT_SECTION);
-                // Sleep(readCooldown);
+                        // if card not empty
+                        if (*((uint64_t *)&device->u.usage_value[0]) > 0)
+                            for (int i = 0; i < 8; ++i)
+                                card_info.card_id[i] = device->u.usage_value[i];
+                        
+                        waitingForTouch = false;
+                        HasCard = true;
+                    }
+                }
+                LeaveCriticalSection(&CARDIO_HID_CRIT_SECTION);
+                Sleep(readCooldown);
             }
             else // SmartCard
             {
-                scard_update(&card_info, &waitingForTouch, &HasCard);
+                scard_update(&card_info, &waitingForTouch, &HasCard, &blockBadFelica);
             }
 
             // if (UID[0] > 0) // If a card was read, format it properly and set HasCard to true so the game can insert it on next frame.
@@ -165,7 +166,8 @@ void Init()
     toml_table_t *config = openConfig(configPath("plugins/cardreader.toml"));
     if (config)
     {
-        usingSmartCard = readConfigBool(config, "using_smartcard", false);
+        blockBadFelica = readConfigBool(config, "block_felica_bad_reader", true);
+        usingSmartCard = readConfigBool(config, "using_smartcard", true);
         readCooldown = readConfigInt(config, "read_cooldown", usingSmartCard ? 500 : 50);
         toml_free(config);
     }
@@ -219,25 +221,32 @@ void Update()
         printWarning("%s (%s): HasCard True!\n", __func__, module);
         printWarning("%s (%s): Card scan detected! Type: %02X\n", __func__, module, card_info.card_type);
 
-        if (card_info.card_type == Mifare)
-        {
-            // u64 numAccessID;
-            // for (int i = 0; i < 10; i++)
-            //     numAccessID = (numAccessID >> 8) | ((uint64_t)card_info.card_id[i] << 56);
-            sprintf(AccessID, "%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X",
-            card_info.card_id[0],
-            card_info.card_id[1],
-            card_info.card_id[2],
-            card_info.card_id[3],
-            card_info.card_id[4],
-            card_info.card_id[5],
-            card_info.card_id[6],
-            card_info.card_id[7],
-            card_info.card_id[8],
-            card_info.card_id[9]);
-        }
-        else
-        {
+        if (usingSmartCard) {
+            if (card_info.card_type == Mifare)
+            {
+                // u64 numAccessID;
+                // for (int i = 0; i < 10; i++)
+                //     numAccessID = (numAccessID >> 8) | ((uint64_t)card_info.card_id[i] << 56);
+                sprintf(AccessID, "%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X",
+                card_info.card_id[0],
+                card_info.card_id[1],
+                card_info.card_id[2],
+                card_info.card_id[3],
+                card_info.card_id[4],
+                card_info.card_id[5],
+                card_info.card_id[6],
+                card_info.card_id[7],
+                card_info.card_id[8],
+                card_info.card_id[9]);
+            }
+            else
+            {
+                u64 ReversedAccessID;
+                for (int i = 0; i < 8; i++)
+                    ReversedAccessID = (ReversedAccessID << 8) | card_info.card_id[i];
+                sprintf(AccessID, "%020llu", ReversedAccessID);
+            }
+        } else {
             u64 ReversedAccessID;
             for (int i = 0; i < 8; i++)
                 ReversedAccessID = (ReversedAccessID << 8) | card_info.card_id[i];
