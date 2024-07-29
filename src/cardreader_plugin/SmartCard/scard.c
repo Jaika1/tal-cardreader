@@ -164,7 +164,7 @@ void scard_poll(struct card_info *card_info, SCARDCONTEXT _hContext, LPCTSTR _re
         card_info->card_type = Mifare;
         //*waitForTouch = false;
         //*hasCard = true;
-        return;
+        //return;
     }
     else if (cardProtocol == SCARD_ATR_PROTOCOL_FELICA_212K) // Felica
     {
@@ -200,7 +200,7 @@ void scard_poll(struct card_info *card_info, SCARDCONTEXT _hContext, LPCTSTR _re
         card_info->card_type = FeliCa;
         //*waitForTouch = false;
         //*hasCard = true;
-        return;
+        //return;
     }
     else
     {
